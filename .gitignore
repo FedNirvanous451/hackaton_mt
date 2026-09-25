@@ -1,0 +1,39 @@
+# Hackathon data and distributed emulator image. Obtain these separately.
+/dataset/
+
+# Dataset-derived reference features and target labels.
+/model/tests/reference/
+
+# Generated documentation and local test artifacts.
+/backend/docs/code/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local Python environments and configuration.
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+
+# Local outputs and credentials.
+*.log
+*.sqlite
+*.sqlite3
+*.db
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+submission.csv
+
+# Editor and operating system files.
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

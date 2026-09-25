@@ -1,0 +1,34 @@
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
+      - "9201:9201"
+    environment:
+      DATASET_DIR: /srv/dataset
+      DATASET_SPLIT: ${DATASET_SPLIT:-validate}
+      ML_SERVICE_URL: ${ML_SERVICE_URL:-http://ml:8081}
+      ML_HISTORY_MINUTES: ${ML_HISTORY_MINUTES:-15}
+      DEMO_SCHEDULE_SHIFT_DAYS: ${DEMO_SCHEDULE_SHIFT_DAYS:-0}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173}
+    volumes:
+      - ../dataset:/srv/dataset:ro
+    depends_on:
+      ml:
+        condition: service_healthy
+    restart: unless-stopped
+  ml:
+    build:
+      context: ..
+      dockerfile: model/Dockerfile
+    ports:
+      - "8081:8081"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health/ready', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped

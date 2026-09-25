@@ -1,0 +1,13 @@
+**
+!backend/
+!backend/app/
+!backend/app/__init__.py
+!backend/app/models.py
+!model/
+!model/__init__.py
+!model/app.py
+!model/features.py
+!model/catboost_all.cbm
+!model/requirements.txt
+**/__pycache__/
+**/*.pyc
