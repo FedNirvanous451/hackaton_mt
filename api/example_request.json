@@ -1,0 +1,17 @@
+{
+  "forecast_time": "2026-01-06T14:00:00",
+  "target_time_begin": "2026-01-06T14:12:00",
+  "target_stop_lon": 37.6176,
+  "target_stop_lat": 55.7558,
+  "last_message_age_s": 8.0,
+  "last_speed_kmh": 22.0,
+  "mean_speed_1m_kmh": 21.0,
+  "mean_speed_3m_kmh": 19.0,
+  "mean_speed_5m_kmh": 18.0,
+  "speed_std_5m_kmh": 4.5,
+  "speed_change_5m_kmh": -3.0,
+  "stopped_share_5m": 0.1,
+  "valid_messages_5m": 20,
+  "distance_to_target_km": 3.2,
+  "current_dev_s": 45.0
+}

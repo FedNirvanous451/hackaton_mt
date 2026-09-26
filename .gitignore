@@ -1,0 +1,53 @@
+# Данные для обучения и проверки
+data/
+dataset/
+*.csv
+*.parquet
+*.feather
+
+# Обученные модели и крупные артефакты
+models/*.joblib
+models/*.pkl
+models/*.pickle
+models/*.cbm
+models/*.onnx
+
+# Виртуальные окружения
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Переменные окружения и секреты
+.env
+.env.*
+!.env.example
+
+# IDE и операционная система
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Логи и временные файлы
+*.log
+tmp/
+temp/
+.cache/
+
+# Сборка и пакеты
+build/
+dist/
+*.egg-info/
