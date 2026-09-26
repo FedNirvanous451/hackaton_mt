@@ -136,7 +136,9 @@ def test_ml_core_http_contract_and_websocket():
             assert client.get("/api/v1/metrics").json()["ml_success"] >= 1
             assert client.get("/health/ready").json()["scheduled_arrivals"] == 2
             assert client.get("/demo").status_code == 404
-            assert client.get("/api/v1/timeline").json()["step_seconds"] == 15
+            timeline_resp = client.get("/api/v1/timeline").json()
+            assert "forecast_times" in timeline_resp, "Timeline endpoint must return forecast_times"
+            assert len(timeline_resp["forecast_times"]) > 0, "Forecast times list should not be empty"
     finally:
         server.shutdown()
         server.server_close()
