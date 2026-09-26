@@ -26,8 +26,8 @@ jobs:
         
     - name: Run tests
       run: |
+        export PYTHONPATH="${GITHUB_WORKSPACE}:${PYTHONPATH}"
         cd backend
-        # Запускаем тесты с выводом деталей и остановкой на первой ошибке
         python -m pytest tests/test_backend.py -v --tb=short
         
     - name: Generate PyDoc
