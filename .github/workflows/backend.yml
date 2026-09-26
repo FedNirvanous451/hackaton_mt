@@ -28,7 +28,7 @@ jobs:
       run: |
         cd backend
         # Запускаем тесты с выводом деталей и остановкой на первой ошибке
-        python -m pytest app/tests/test_backend.py -v --tb=short
+        python -m pytest tests/test_backend.py -v --tb=short
         
     - name: Generate PyDoc
       run: |
