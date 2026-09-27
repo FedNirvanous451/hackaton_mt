@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+
+<html lang="ru" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>ML-ядро: Python-модули &#8212; Документация по коду — транспортный диспетчер</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=5ecbeea2" />
+    <link rel="stylesheet" type="text/css" href="_static/basic.css?v=b08954a9" />
+    <link rel="stylesheet" type="text/css" href="_static/alabaster.css?v=27fed22d" />
+    <script src="_static/documentation_options.js?v=372fde1a"></script>
+    <script src="_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="_static/translations.js?v=cd1d70c9"></script>
+    <link rel="index" title="Алфавитный указатель" href="genindex.html" />
+    <link rel="search" title="Поиск" href="search.html" />
+    <link rel="next" title="Документация API" href="api.html" />
+    <link rel="prev" title="Backend: Python-модули" href="backend.html" />
+   
+  <link rel="stylesheet" href="_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="ml-python">
+<h1>ML-ядро: Python-модули<a class="headerlink" href="#ml-python" title="Ссылка на этот заголовок">¶</a></h1>
+<section id="api">
+<h2>API прогноза<a class="headerlink" href="#api" title="Ссылка на этот заголовок">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">api.main</span></code> описывает входные и выходные поля модели, проверяет горизонт
+прогноза и выполняет инференс загруженной модели.</p>
+<dl class="py class" id="module-api.main">
+<dt class="sig sig-object py" id="api.main.PredictionRequest">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">api.main.</span></span><span class="sig-name descname"><span class="pre">PredictionRequest</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">forecast_time</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">target_time_begin</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">target_stop_lon</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">target_stop_lat</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">last_message_age_s</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">last_speed_kmh</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mean_speed_1m_kmh</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mean_speed_3m_kmh</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mean_speed_5m_kmh</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">speed_std_5m_kmh</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">speed_change_5m_kmh</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">stopped_share_5m</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">valid_messages_5m</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">distance_to_target_km</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">current_dev_s</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/api/main.html#PredictionRequest"><span class="viewcode-link"><span class="pre">[исходный</span> <span class="pre">код]</span></span></a><a class="headerlink" href="#api.main.PredictionRequest" title="Ссылка на это определение">¶</a></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Параметры<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>forecast_time</strong> (<em>datetime</em>)</p></li>
+<li><p><strong>target_time_begin</strong> (<em>datetime</em>)</p></li>
+<li><p><strong>target_stop_lon</strong> (<em>float</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>target_stop_lat</strong> (<em>float</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>last_message_age_s</strong> (<em>float</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>last_speed_kmh</strong> (<em>float</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>mean_speed_1m_kmh</strong> (<em>float</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>mean_speed_3m_kmh</strong> (<em>float</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>mean_speed_5m_kmh</strong> (<em>float</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>speed_std_5m_kmh</strong> (<em>float</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>speed_change_5m_kmh</strong> (<em>float</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>stopped_share_5m</strong> (<em>float</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>valid_messages_5m</strong> (<em>float</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>distance_to_target_km</strong> (<em>float</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>current_dev_s</strong> (<em>float</em><em> | </em><em>None</em>)</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="api.main.PredictionRequest.forecast_time">
+<span class="sig-name descname"><span class="pre">forecast_time</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">datetime</span></span><a class="headerlink" href="#api.main.PredictionRequest.forecast_time" title="Ссылка на это определение">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="api.main.PredictionRequest.target_time_begin">
+<span class="sig-name descname"><span class="pre">target_time_begin</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">datetime</span></span><a class="headerlink" href="#api.main.PredictionRequest.target_time_begin" title="Ссылка на это определение">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="api.main.PredictionRequest.target_stop_lon">
+<span class="sig-name descname"><span class="pre">target_stop_lon</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">float</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><a class="headerlink" href="#api.main.PredictionRequest.target_stop_lon" title="Ссылка на это определение">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="api.main.PredictionRequest.target_stop_lat">
+<span class="sig-name descname"><span class="pre">target_stop_lat</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">float</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><a class="headerlink" href="#api.main.PredictionRequest.target_stop_lat" title="Ссылка на это определение">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="api.main.PredictionRequest.last_message_age_s">
+<span class="sig-name descname"><span class="pre">last_message_age_s</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">float</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><a class="headerlink" href="#api.main.PredictionRequest.last_message_age_s" title="Ссылка на это определение">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="api.main.PredictionRequest.last_speed_kmh">
+<span class="sig-name descname"><span class="pre">last_speed_kmh</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">float</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><a class="headerlink" href="#api.main.PredictionRequest.last_speed_kmh" title="Ссылка на это определение">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="api.main.PredictionRequest.mean_speed_1m_kmh">
+<span class="sig-name descname"><span class="pre">mean_speed_1m_kmh</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">float</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><a class="headerlink" href="#api.main.PredictionRequest.mean_speed_1m_kmh" title="Ссылка на это определение">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="api.main.PredictionRequest.mean_speed_3m_kmh">
+<span class="sig-name descname"><span class="pre">mean_speed_3m_kmh</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">float</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><a class="headerlink" href="#api.main.PredictionRequest.mean_speed_3m_kmh" title="Ссылка на это определение">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="api.main.PredictionRequest.mean_speed_5m_kmh">
+<span class="sig-name descname"><span class="pre">mean_speed_5m_kmh</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">float</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><a class="headerlink" href="#api.main.PredictionRequest.mean_speed_5m_kmh" title="Ссылка на это определение">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="api.main.PredictionRequest.speed_std_5m_kmh">
+<span class="sig-name descname"><span class="pre">speed_std_5m_kmh</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">float</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><a class="headerlink" href="#api.main.PredictionRequest.speed_std_5m_kmh" title="Ссылка на это определение">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="api.main.PredictionRequest.speed_change_5m_kmh">
+<span class="sig-name descname"><span class="pre">speed_change_5m_kmh</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">float</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><a class="headerlink" href="#api.main.PredictionRequest.speed_change_5m_kmh" title="Ссылка на это определение">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="api.main.PredictionRequest.stopped_share_5m">
+<span class="sig-name descname"><span class="pre">stopped_share_5m</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">float</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><a class="headerlink" href="#api.main.PredictionRequest.stopped_share_5m" title="Ссылка на это определение">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="api.main.PredictionRequest.valid_messages_5m">
+<span class="sig-name descname"><span class="pre">valid_messages_5m</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">float</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><a class="headerlink" href="#api.main.PredictionRequest.valid_messages_5m" title="Ссылка на это определение">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="api.main.PredictionRequest.distance_to_target_km">
+<span class="sig-name descname"><span class="pre">distance_to_target_km</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">float</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><a class="headerlink" href="#api.main.PredictionRequest.distance_to_target_km" title="Ссылка на это определение">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="api.main.PredictionRequest.current_dev_s">
+<span class="sig-name descname"><span class="pre">current_dev_s</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">float</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><a class="headerlink" href="#api.main.PredictionRequest.current_dev_s" title="Ссылка на это определение">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="api.main.PredictionRequest.model_config">
+<span class="sig-name descname"><span class="pre">model_config</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">{}</span></span><a class="headerlink" href="#api.main.PredictionRequest.model_config" title="Ссылка на это определение">¶</a></dt>
+<dd><p>Configuration for the model, should be a dictionary conforming to [<cite>ConfigDict</cite>][pydantic.config.ConfigDict].</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="api.main.PredictionResponse">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">api.main.</span></span><span class="sig-name descname"><span class="pre">PredictionResponse</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">prediction_delay_s</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">horizon_minutes</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model_version</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">patterns</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/api/main.html#PredictionResponse"><span class="viewcode-link"><span class="pre">[исходный</span> <span class="pre">код]</span></span></a><a class="headerlink" href="#api.main.PredictionResponse" title="Ссылка на это определение">¶</a></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Параметры<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>prediction_delay_s</strong> (<em>float</em>)</p></li>
+<li><p><strong>horizon_minutes</strong> (<em>float</em>)</p></li>
+<li><p><strong>model_version</strong> (<em>str</em>)</p></li>
+<li><p><strong>patterns</strong> (<em>list</em><em>[</em><em>str</em><em>]</em>)</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="api.main.PredictionResponse.prediction_delay_s">
+<span class="sig-name descname"><span class="pre">prediction_delay_s</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">float</span></span><a class="headerlink" href="#api.main.PredictionResponse.prediction_delay_s" title="Ссылка на это определение">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="api.main.PredictionResponse.horizon_minutes">
+<span class="sig-name descname"><span class="pre">horizon_minutes</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">float</span></span><a class="headerlink" href="#api.main.PredictionResponse.horizon_minutes" title="Ссылка на это определение">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="api.main.PredictionResponse.model_version">
+<span class="sig-name descname"><span class="pre">model_version</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></span><a class="headerlink" href="#api.main.PredictionResponse.model_version" title="Ссылка на это определение">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="api.main.PredictionResponse.patterns">
+<span class="sig-name descname"><span class="pre">patterns</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">list</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span><a class="headerlink" href="#api.main.PredictionResponse.patterns" title="Ссылка на это определение">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="api.main.PredictionResponse.model_config">
+<span class="sig-name descname"><span class="pre">model_config</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">{}</span></span><a class="headerlink" href="#api.main.PredictionResponse.model_config" title="Ссылка на это определение">¶</a></dt>
+<dd><p>Configuration for the model, should be a dictionary conforming to [<cite>ConfigDict</cite>][pydantic.config.ConfigDict].</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="api.main.make_features">
+<span class="sig-prename descclassname"><span class="pre">api.main.</span></span><span class="sig-name descname"><span class="pre">make_features</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">request</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/api/main.html#make_features"><span class="viewcode-link"><span class="pre">[исходный</span> <span class="pre">код]</span></span></a><a class="headerlink" href="#api.main.make_features" title="Ссылка на это определение">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="api.main.lifespan">
+<span class="sig-prename descclassname"><span class="pre">api.main.</span></span><span class="sig-name descname"><span class="pre">lifespan</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">_</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/api/main.html#lifespan"><span class="viewcode-link"><span class="pre">[исходный</span> <span class="pre">код]</span></span></a><a class="headerlink" href="#api.main.lifespan" title="Ссылка на это определение">¶</a></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Параметры<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>_</strong> (<em>FastAPI</em>)</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="api.main.health">
+<span class="sig-prename descclassname"><span class="pre">api.main.</span></span><span class="sig-name descname"><span class="pre">health</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="_modules/api/main.html#health"><span class="viewcode-link"><span class="pre">[исходный</span> <span class="pre">код]</span></span></a><a class="headerlink" href="#api.main.health" title="Ссылка на это определение">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="api.main.predict">
+<span class="sig-prename descclassname"><span class="pre">api.main.</span></span><span class="sig-name descname"><span class="pre">predict</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">request</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/api/main.html#predict"><span class="viewcode-link"><span class="pre">[исходный</span> <span class="pre">код]</span></span></a><a class="headerlink" href="#api.main.predict" title="Ссылка на это определение">¶</a></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Параметры<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>request</strong> (<a class="reference internal" href="#api.main.PredictionRequest" title="api.main.PredictionRequest"><em>PredictionRequest</em></a>)</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="id1">
+<h2>Признаки и наблюдаемые паттерны<a class="headerlink" href="#id1" title="Ссылка на этот заголовок">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">features</span></code> содержит список признаков и подготовку таблицы для модели.
+<code class="docutils literal notranslate"><span class="pre">patterns</span></code> возвращает понятные условия движения рядом с прогнозом.</p>
+<dl class="py function" id="module-features">
+<dt class="sig sig-object py" id="features.prepare">
+<span class="sig-prename descclassname"><span class="pre">features.</span></span><span class="sig-name descname"><span class="pre">prepare</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">data</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/features.html#prepare"><span class="viewcode-link"><span class="pre">[исходный</span> <span class="pre">код]</span></span></a><a class="headerlink" href="#features.prepare" title="Ссылка на это определение">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py function" id="module-patterns">
+<dt class="sig sig-object py" id="patterns.detect_patterns">
+<span class="sig-prename descclassname"><span class="pre">patterns.</span></span><span class="sig-name descname"><span class="pre">detect_patterns</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">data</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">horizon_s</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/patterns.html#detect_patterns"><span class="viewcode-link"><span class="pre">[исходный</span> <span class="pre">код]</span></span></a><a class="headerlink" href="#patterns.detect_patterns" title="Ссылка на это определение">¶</a></dt>
+<dd></dd></dl>
+
+</section>
+<section id="id2">
+<h2>Подготовка данных и обучение<a class="headerlink" href="#id2" title="Ссылка на этот заголовок">¶</a></h2>
+<p>Сценарии подготовки и обучения запускают основную работу только через
+<code class="docutils literal notranslate"><span class="pre">main()</span></code>; их импорт для Sphinx не запускает обработку датасета.</p>
+<dl class="py function" id="module-prepare_data">
+<dt class="sig sig-object py" id="prepare_data.parse_point">
+<span class="sig-prename descclassname"><span class="pre">prepare_data.</span></span><span class="sig-name descname"><span class="pre">parse_point</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">value</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/prepare_data.html#parse_point"><span class="viewcode-link"><span class="pre">[исходный</span> <span class="pre">код]</span></span></a><a class="headerlink" href="#prepare_data.parse_point" title="Ссылка на это определение">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="prepare_data.haversine_km">
+<span class="sig-prename descclassname"><span class="pre">prepare_data.</span></span><span class="sig-name descname"><span class="pre">haversine_km</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">lon1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">lat1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">lon2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">lat2</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/prepare_data.html#haversine_km"><span class="viewcode-link"><span class="pre">[исходный</span> <span class="pre">код]</span></span></a><a class="headerlink" href="#prepare_data.haversine_km" title="Ссылка на это определение">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="prepare_data.main">
+<span class="sig-prename descclassname"><span class="pre">prepare_data.</span></span><span class="sig-name descname"><span class="pre">main</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="_modules/prepare_data.html#main"><span class="viewcode-link"><span class="pre">[исходный</span> <span class="pre">код]</span></span></a><a class="headerlink" href="#prepare_data.main" title="Ссылка на это определение">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py function" id="module-train">
+<dt class="sig sig-object py" id="train.make_model">
+<span class="sig-prename descclassname"><span class="pre">train.</span></span><span class="sig-name descname"><span class="pre">make_model</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="_modules/train.html#make_model"><span class="viewcode-link"><span class="pre">[исходный</span> <span class="pre">код]</span></span></a><a class="headerlink" href="#train.make_model" title="Ссылка на это определение">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="train.main">
+<span class="sig-prename descclassname"><span class="pre">train.</span></span><span class="sig-name descname"><span class="pre">main</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="_modules/train.html#main"><span class="viewcode-link"><span class="pre">[исходный</span> <span class="pre">код]</span></span></a><a class="headerlink" href="#train.main" title="Ссылка на это определение">¶</a></dt>
+<dd></dd></dl>
+
+</section>
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="index.html">Прогноз задержек городского транспорта</a></h1>
+
+
+
+
+
+
+
+
+<h3>Навигация</h3>
+<p class="caption" role="heading"><span class="caption-text">Разделы</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="architecture.html">Устройство системы</a></li>
+<li class="toctree-l1"><a class="reference internal" href="backend.html">Backend: Python-модули</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">ML-ядро: Python-модули</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#api">API прогноза</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#id1">Признаки и наблюдаемые паттерны</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#id2">Подготовка данных и обучение</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="api.html">Документация API</a></li>
+</ul>
+
+
+<search id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Быстрый поиск</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Искать" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 9.1.0</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
+      
+      |
+      <a href="_sources/ml_core.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>

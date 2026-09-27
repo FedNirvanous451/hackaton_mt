@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+
+<html lang="ru" data-content_root="../../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>backend.app.history &#8212; Документация по коду — транспортный диспетчер</title>
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=5ecbeea2" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/basic.css?v=b08954a9" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/alabaster.css?v=27fed22d" />
+    <script src="../../../_static/documentation_options.js?v=372fde1a"></script>
+    <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../_static/translations.js?v=cd1d70c9"></script>
+    <link rel="index" title="Алфавитный указатель" href="../../../genindex.html" />
+    <link rel="search" title="Поиск" href="../../../search.html" />
+   
+  <link rel="stylesheet" href="../../../_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <h1>Исходный код backend.app.history</h1><div class="highlight"><pre>
+<span></span><span class="sd">"""Local, read-only CSV fixture and 15-second replay for backend development."""</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">csv</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">bisect</span><span class="w"> </span><span class="kn">import</span> <span class="n">bisect_left</span><span class="p">,</span> <span class="n">bisect_right</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">defaultdict</span><span class="p">,</span> <span class="n">deque</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">datetime</span><span class="p">,</span> <span class="n">timedelta</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">.models</span><span class="w"> </span><span class="kn">import</span> <span class="n">ScheduledArrival</span><span class="p">,</span> <span class="n">Snapshot</span><span class="p">,</span> <span class="n">Telemetry</span><span class="p">,</span> <span class="n">TrackPoint</span><span class="p">,</span> <span class="n">VehicleRegistration</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.service</span><span class="w"> </span><span class="kn">import</span> <span class="n">DispatcherService</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.store</span><span class="w"> </span><span class="kn">import</span> <span class="n">LiveStore</span>
+
+<span class="n">POINT</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">"POINT\s*\(\s*([\d.\-]+)\s+([\d.\-]+)\s*\)"</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">I</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_datetime</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">datetime</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">value</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+    <span class="k">return</span> <span class="n">datetime</span><span class="o">.</span><span class="n">fromisoformat</span><span class="p">(</span><span class="n">value</span><span class="p">[:</span><span class="mi">26</span><span class="p">])</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_float</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="k">if</span> <span class="n">value</span> <span class="ow">and</span> <span class="n">value</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="k">else</span> <span class="kc">None</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_int</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">return</span> <span class="nb">int</span><span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="k">if</span> <span class="n">value</span> <span class="ow">and</span> <span class="n">value</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="k">else</span> <span class="kc">None</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_rows</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="n">Path</span><span class="p">):</span>
+    <span class="k">with</span> <span class="n">path</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="n">encoding</span><span class="o">=</span><span class="s2">"utf-8-sig"</span><span class="p">,</span> <span class="n">newline</span><span class="o">=</span><span class="s2">""</span><span class="p">)</span> <span class="k">as</span> <span class="n">handle</span><span class="p">:</span>
+        <span class="k">yield from</span> <span class="n">csv</span><span class="o">.</span><span class="n">DictReader</span><span class="p">(</span><span class="n">handle</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="HistoricalDataset">
+<a class="viewcode-back" href="../../../backend.html#backend.app.history.HistoricalDataset">[документация]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">HistoricalDataset</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">root</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span> <span class="n">split</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">ml_url</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+                 <span class="n">history_minutes</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">15</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">split</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">{</span><span class="s2">"train"</span><span class="p">,</span> <span class="s2">"test"</span><span class="p">,</span> <span class="s2">"validate"</span><span class="p">}:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"split must be train, test or validate"</span><span class="p">)</span>
+        <span class="n">base</span> <span class="o">=</span> <span class="n">root</span> <span class="o">/</span> <span class="n">split</span>
+        <span class="n">schedule_path</span> <span class="o">=</span> <span class="n">base</span> <span class="o">/</span> <span class="p">(</span><span class="s2">"schedule_plan.csv"</span> <span class="k">if</span> <span class="n">split</span> <span class="o">==</span> <span class="s2">"validate"</span> <span class="k">else</span> <span class="s2">"schedule.csv"</span><span class="p">)</span>
+        <span class="n">points_path</span> <span class="o">=</span> <span class="n">base</span> <span class="o">/</span> <span class="s2">"points.csv"</span> <span class="k">if</span> <span class="n">split</span> <span class="o">==</span> <span class="s2">"validate"</span> <span class="k">else</span> <span class="n">root</span> <span class="o">/</span> <span class="s2">"labels"</span> <span class="o">/</span> <span class="sa">f</span><span class="s2">"labels_</span><span class="si">{</span><span class="n">split</span><span class="si">}</span><span class="s2">.csv"</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">store</span> <span class="o">=</span> <span class="n">LiveStore</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">service</span> <span class="o">=</span> <span class="n">DispatcherService</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="p">,</span> <span class="n">ml_url</span><span class="p">,</span> <span class="n">history_minutes</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">split</span> <span class="o">=</span> <span class="n">split</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">points_by_id</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">datetime</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">_rows</span><span class="p">(</span><span class="n">schedule_path</span><span class="p">):</span>
+            <span class="n">geom</span> <span class="o">=</span> <span class="n">POINT</span><span class="o">.</span><span class="n">fullmatch</span><span class="p">(</span><span class="n">row</span><span class="p">[</span><span class="s2">"geom"</span><span class="p">]</span><span class="o">.</span><span class="n">strip</span><span class="p">())</span>
+            <span class="k">if</span> <span class="n">geom</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="k">continue</span>
+            <span class="n">arrival</span> <span class="o">=</span> <span class="n">ScheduledArrival</span><span class="p">(</span><span class="n">arrival_id</span><span class="o">=</span><span class="nb">int</span><span class="p">(</span><span class="n">row</span><span class="p">[</span><span class="s2">"tt_action_item_id"</span><span class="p">]),</span> <span class="n">tr_id</span><span class="o">=</span><span class="nb">int</span><span class="p">(</span><span class="n">row</span><span class="p">[</span><span class="s2">"tr_id"</span><span class="p">]),</span>
+                <span class="n">planned_at</span><span class="o">=</span><span class="n">_datetime</span><span class="p">(</span><span class="n">row</span><span class="p">[</span><span class="s2">"time_begin"</span><span class="p">]),</span> <span class="n">lon</span><span class="o">=</span><span class="nb">float</span><span class="p">(</span><span class="n">geom</span><span class="p">[</span><span class="mi">1</span><span class="p">]),</span> <span class="n">lat</span><span class="o">=</span><span class="nb">float</span><span class="p">(</span><span class="n">geom</span><span class="p">[</span><span class="mi">2</span><span class="p">]),</span>
+                <span class="n">address</span><span class="o">=</span><span class="n">row</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"building_address"</span><span class="p">)</span> <span class="ow">or</span> <span class="kc">None</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">upsert_arrival</span><span class="p">(</span><span class="n">arrival</span><span class="p">)</span>
+            <span class="n">actual</span> <span class="o">=</span> <span class="n">_datetime</span><span class="p">(</span><span class="n">row</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"time_fact_begin"</span><span class="p">))</span>
+            <span class="k">if</span> <span class="n">actual</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">observe_arrival</span><span class="p">(</span><span class="n">arrival</span><span class="o">.</span><span class="n">arrival_id</span><span class="p">,</span> <span class="n">actual</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">_rows</span><span class="p">(</span><span class="n">points_path</span><span class="p">):</span>
+            <span class="n">tr_id</span><span class="p">,</span> <span class="n">at</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">row</span><span class="p">[</span><span class="s2">"tr_id"</span><span class="p">]),</span> <span class="n">_datetime</span><span class="p">(</span><span class="n">row</span><span class="p">[</span><span class="s2">"T"</span><span class="p">])</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">points_by_id</span><span class="p">[</span><span class="n">row</span><span class="p">[</span><span class="s2">"sample_id"</span><span class="p">]]</span> <span class="o">=</span> <span class="p">(</span><span class="n">tr_id</span><span class="p">,</span> <span class="n">at</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">service</span><span class="o">.</span><span class="n">forecast_points</span><span class="p">[(</span><span class="n">tr_id</span><span class="p">,</span> <span class="n">at</span><span class="p">)]</span> <span class="o">=</span> <span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">row</span><span class="p">[</span><span class="s2">"target_stop_id"</span><span class="p">]),</span> <span class="n">_float</span><span class="p">(</span><span class="n">row</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"cur_dev_s"</span><span class="p">)))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">by_vehicle</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">list</span><span class="p">[</span><span class="n">Telemetry</span><span class="p">]]</span> <span class="o">=</span> <span class="n">defaultdict</span><span class="p">(</span><span class="nb">list</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">events</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Telemetry</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">_rows</span><span class="p">(</span><span class="n">base</span> <span class="o">/</span> <span class="s2">"traffic.csv"</span><span class="p">):</span>
+            <span class="n">tr_id</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">row</span><span class="p">[</span><span class="s2">"tr_id"</span><span class="p">])</span>
+            <span class="n">unit_id</span> <span class="o">=</span> <span class="n">_int</span><span class="p">(</span><span class="n">row</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"unit_id"</span><span class="p">))</span>
+            <span class="k">if</span> <span class="n">unit_id</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">unit_id</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">unit_to_tr</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="n">VehicleRegistration</span><span class="p">(</span><span class="n">tr_id</span><span class="o">=</span><span class="n">tr_id</span><span class="p">,</span> <span class="n">unit_id</span><span class="o">=</span><span class="n">unit_id</span><span class="p">))</span>
+            <span class="n">valid</span> <span class="o">=</span> <span class="n">row</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"location_valid"</span><span class="p">,</span> <span class="s2">""</span><span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">in</span> <span class="p">{</span><span class="s2">"true"</span><span class="p">,</span> <span class="s2">"1"</span><span class="p">}</span>
+            <span class="n">lon</span><span class="p">,</span> <span class="n">lat</span> <span class="o">=</span> <span class="n">_float</span><span class="p">(</span><span class="n">row</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"lon"</span><span class="p">)),</span> <span class="n">_float</span><span class="p">(</span><span class="n">row</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"lat"</span><span class="p">))</span>
+            <span class="n">valid</span> <span class="o">=</span> <span class="n">valid</span> <span class="ow">and</span> <span class="n">lon</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">lat</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="o">-</span><span class="mi">180</span> <span class="o">&lt;=</span> <span class="n">lon</span> <span class="o">&lt;=</span> <span class="mi">180</span> <span class="ow">and</span> <span class="o">-</span><span class="mi">90</span> <span class="o">&lt;=</span> <span class="n">lat</span> <span class="o">&lt;=</span> <span class="mi">90</span>
+            <span class="n">item</span> <span class="o">=</span> <span class="n">Telemetry</span><span class="p">(</span><span class="n">tr_id</span><span class="o">=</span><span class="n">tr_id</span><span class="p">,</span> <span class="n">unit_id</span><span class="o">=</span><span class="n">unit_id</span><span class="p">,</span>
+                <span class="n">packet_id</span><span class="o">=</span><span class="n">row</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"packet_id"</span><span class="p">),</span> <span class="n">device_event_id</span><span class="o">=</span><span class="n">_int</span><span class="p">(</span><span class="n">row</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"device_event_id"</span><span class="p">)),</span>
+                <span class="n">event_time</span><span class="o">=</span><span class="n">_datetime</span><span class="p">(</span><span class="n">row</span><span class="p">[</span><span class="s2">"event_time"</span><span class="p">]),</span> <span class="n">gps_time</span><span class="o">=</span><span class="n">_datetime</span><span class="p">(</span><span class="n">row</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"gps_time"</span><span class="p">)),</span>
+                <span class="n">received_at</span><span class="o">=</span><span class="n">_datetime</span><span class="p">(</span><span class="n">row</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"receive_time"</span><span class="p">)),</span>
+                <span class="n">is_hist_data</span><span class="o">=</span><span class="n">row</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"is_hist_data"</span><span class="p">,</span> <span class="s2">""</span><span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">in</span> <span class="p">{</span><span class="s2">"true"</span><span class="p">,</span> <span class="s2">"1"</span><span class="p">},</span>
+                <span class="n">source</span><span class="o">=</span><span class="s2">"csv"</span><span class="p">,</span> <span class="n">lon</span><span class="o">=</span><span class="n">lon</span> <span class="k">if</span> <span class="n">valid</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span> <span class="n">lat</span><span class="o">=</span><span class="n">lat</span> <span class="k">if</span> <span class="n">valid</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+                <span class="n">alt</span><span class="o">=</span><span class="n">_float</span><span class="p">(</span><span class="n">row</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"alt"</span><span class="p">)),</span> <span class="n">speed_kmh</span><span class="o">=</span><span class="n">_float</span><span class="p">(</span><span class="n">row</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"speed"</span><span class="p">)),</span>
+                <span class="n">heading_deg</span><span class="o">=</span><span class="n">_float</span><span class="p">(</span><span class="n">row</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"heading"</span><span class="p">)),</span> <span class="n">location_valid</span><span class="o">=</span><span class="n">valid</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">by_vehicle</span><span class="p">[</span><span class="n">tr_id</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">item</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">events</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">item</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">events</span><span class="o">.</span><span class="n">sort</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">item</span><span class="p">:</span> <span class="n">item</span><span class="o">.</span><span class="n">event_time</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">event_times</span> <span class="o">=</span> <span class="p">[</span><span class="n">item</span><span class="o">.</span><span class="n">event_time</span> <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">events</span><span class="p">]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">times_by_vehicle</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">valid_by_vehicle</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">valid_times_by_vehicle</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="k">for</span> <span class="n">tr_id</span><span class="p">,</span> <span class="n">items</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">by_vehicle</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="n">items</span><span class="o">.</span><span class="n">sort</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">item</span><span class="p">:</span> <span class="n">item</span><span class="o">.</span><span class="n">event_time</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">times_by_vehicle</span><span class="p">[</span><span class="n">tr_id</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="n">item</span><span class="o">.</span><span class="n">event_time</span> <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">items</span><span class="p">]</span>
+            <span class="n">valid_items</span> <span class="o">=</span> <span class="p">[</span><span class="n">item</span> <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">items</span> <span class="k">if</span> <span class="n">item</span><span class="o">.</span><span class="n">location_valid</span><span class="p">]</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">valid_by_vehicle</span><span class="p">[</span><span class="n">tr_id</span><span class="p">]</span> <span class="o">=</span> <span class="n">valid_items</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">valid_times_by_vehicle</span><span class="p">[</span><span class="n">tr_id</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="n">item</span><span class="o">.</span><span class="n">event_time</span> <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">valid_items</span><span class="p">]</span>
+        <span class="n">all_times</span> <span class="o">=</span> <span class="p">[</span><span class="n">item</span><span class="o">.</span><span class="n">event_time</span> <span class="k">for</span> <span class="n">items</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">by_vehicle</span><span class="o">.</span><span class="n">values</span><span class="p">()</span> <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="p">(</span><span class="n">items</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">items</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span> <span class="k">if</span> <span class="n">items</span><span class="p">]</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">all_times</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"historical traffic is empty"</span><span class="p">)</span>
+        <span class="n">start</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">all_times</span><span class="p">)</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="n">microsecond</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+        <span class="n">start</span> <span class="o">-=</span> <span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="n">start</span><span class="o">.</span><span class="n">second</span> <span class="o">%</span> <span class="mi">15</span><span class="p">)</span>
+        <span class="n">end</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">all_times</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">start</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">end</span> <span class="o">=</span> <span class="n">start</span><span class="p">,</span> <span class="n">end</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">step_seconds</span> <span class="o">=</span> <span class="mi">15</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">cursor</span><span class="p">:</span> <span class="n">datetime</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">task</span><span class="p">:</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">Task</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">lock</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">Lock</span><span class="p">()</span>
+
+<div class="viewcode-block" id="HistoricalDataset.timeline">
+<a class="viewcode-back" href="../../../backend.html#backend.app.history.HistoricalDataset.timeline">[документация]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">timeline</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s2">"split"</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">split</span><span class="p">,</span> <span class="s2">"start"</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">start</span><span class="p">,</span> <span class="s2">"end"</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">end</span><span class="p">,</span>
+                <span class="s2">"step_seconds"</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">step_seconds</span><span class="p">,</span>
+                <span class="s2">"steps"</span><span class="p">:</span> <span class="nb">int</span><span class="p">((</span><span class="bp">self</span><span class="o">.</span><span class="n">end</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">start</span><span class="p">)</span><span class="o">.</span><span class="n">total_seconds</span><span class="p">()</span> <span class="o">//</span> <span class="bp">self</span><span class="o">.</span><span class="n">step_seconds</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span>
+                <span class="s2">"sample_count"</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">points_by_id</span><span class="p">),</span>
+                <span class="s2">"packet_count"</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">events</span><span class="p">),</span>
+                <span class="s2">"forecast_times"</span><span class="p">:</span> <span class="nb">sorted</span><span class="p">({</span><span class="n">at</span> <span class="k">for</span> <span class="n">_</span><span class="p">,</span> <span class="n">at</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">points_by_id</span><span class="o">.</span><span class="n">values</span><span class="p">()})}</span></div>
+
+
+<div class="viewcode-block" id="HistoricalDataset.status">
+<a class="viewcode-back" href="../../../backend.html#backend.app.history.HistoricalDataset.status">[документация]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">status</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">{</span><span class="o">**</span><span class="bp">self</span><span class="o">.</span><span class="n">timeline</span><span class="p">(),</span> <span class="s2">"running"</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">task</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">task</span><span class="o">.</span><span class="n">done</span><span class="p">(),</span>
+                <span class="s2">"cursor"</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">cursor</span><span class="p">,</span>
+                <span class="s2">"processed_packets"</span><span class="p">:</span> <span class="n">bisect_right</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">event_times</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">cursor</span><span class="p">)</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">cursor</span> <span class="k">else</span> <span class="mi">0</span><span class="p">}</span></div>
+
+
+<div class="viewcode-block" id="HistoricalDataset.tracks">
+<a class="viewcode-back" href="../../../backend.html#backend.app.history.HistoricalDataset.tracks">[документация]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">tracks</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">until</span><span class="p">:</span> <span class="n">datetime</span><span class="p">,</span> <span class="n">offset</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">limit</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">TrackPoint</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""Return a page of all packets through a checkpoint, including GPS gaps."""</span>
+        <span class="n">end</span> <span class="o">=</span> <span class="n">bisect_right</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">event_times</span><span class="p">,</span> <span class="n">until</span><span class="p">)</span>
+        <span class="k">return</span> <span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">service</span><span class="o">.</span><span class="n">track_point</span><span class="p">(</span><span class="n">item</span><span class="p">)</span> <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">events</span><span class="p">[</span><span class="n">offset</span><span class="p">:</span><span class="nb">min</span><span class="p">(</span><span class="n">end</span><span class="p">,</span> <span class="n">offset</span> <span class="o">+</span> <span class="n">limit</span><span class="p">)]]</span></div>
+
+
+<div class="viewcode-block" id="HistoricalDataset.snapshot">
+<a class="viewcode-back" href="../../../backend.html#backend.app.history.HistoricalDataset.snapshot">[документация]</a>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">snapshot</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">at</span><span class="p">:</span> <span class="n">datetime</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Snapshot</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">at</span> <span class="o">&lt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">start</span> <span class="ow">or</span> <span class="n">at</span> <span class="o">&gt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">end</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"at is outside historical traffic range"</span><span class="p">)</span>
+        <span class="k">async</span> <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">lock</span><span class="p">:</span>
+            <span class="n">service</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">service</span>
+            <span class="n">service</span><span class="o">.</span><span class="n">processed_packets</span> <span class="o">=</span> <span class="n">bisect_right</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">event_times</span><span class="p">,</span> <span class="n">at</span><span class="p">)</span>
+            <span class="n">service</span><span class="o">.</span><span class="n">live</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
+            <span class="n">service</span><span class="o">.</span><span class="n">live_last_valid</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
+            <span class="n">service</span><span class="o">.</span><span class="n">live_history</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
+            <span class="n">cutoff</span> <span class="o">=</span> <span class="n">at</span> <span class="o">-</span> <span class="n">timedelta</span><span class="p">(</span><span class="n">minutes</span><span class="o">=</span><span class="n">service</span><span class="o">.</span><span class="n">ml_history_minutes</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">tr_id</span><span class="p">,</span> <span class="n">items</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">by_vehicle</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+                <span class="n">times</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">times_by_vehicle</span><span class="p">[</span><span class="n">tr_id</span><span class="p">]</span>
+                <span class="n">end</span> <span class="o">=</span> <span class="n">bisect_right</span><span class="p">(</span><span class="n">times</span><span class="p">,</span> <span class="n">at</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">end</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                    <span class="k">continue</span>
+                <span class="n">begin</span> <span class="o">=</span> <span class="n">bisect_right</span><span class="p">(</span><span class="n">times</span><span class="p">,</span> <span class="n">cutoff</span> <span class="o">-</span> <span class="n">timedelta</span><span class="p">(</span><span class="n">microseconds</span><span class="o">=</span><span class="mi">1</span><span class="p">))</span>
+                <span class="n">history</span> <span class="o">=</span> <span class="n">items</span><span class="p">[</span><span class="n">begin</span><span class="p">:</span><span class="n">end</span><span class="p">]</span> <span class="ow">or</span> <span class="p">[</span><span class="n">items</span><span class="p">[</span><span class="n">end</span> <span class="o">-</span> <span class="mi">1</span><span class="p">]]</span>
+                <span class="n">key</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">tr_id</span><span class="p">)</span>
+                <span class="n">service</span><span class="o">.</span><span class="n">live</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">history</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+                <span class="n">service</span><span class="o">.</span><span class="n">live_history</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">deque</span><span class="p">(</span><span class="n">history</span><span class="p">)</span>
+                <span class="n">valid_index</span> <span class="o">=</span> <span class="n">bisect_right</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">valid_times_by_vehicle</span><span class="p">[</span><span class="n">tr_id</span><span class="p">],</span> <span class="n">at</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">valid_index</span><span class="p">:</span>
+                    <span class="n">service</span><span class="o">.</span><span class="n">live_last_valid</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">valid_by_vehicle</span><span class="p">[</span><span class="n">tr_id</span><span class="p">][</span><span class="n">valid_index</span> <span class="o">-</span> <span class="mi">1</span><span class="p">]</span>
+            <span class="k">return</span> <span class="k">await</span> <span class="n">service</span><span class="o">.</span><span class="n">snapshot</span><span class="p">(</span><span class="n">at</span><span class="o">=</span><span class="n">at</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"historical"</span><span class="p">,</span> <span class="n">dataset_split</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">split</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="HistoricalDataset.step">
+<a class="viewcode-back" href="../../../backend.html#backend.app.history.HistoricalDataset.step">[документация]</a>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">step</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">at</span><span class="p">:</span> <span class="n">datetime</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">sample_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                   <span class="n">advance_s</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">15</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Snapshot</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">sample_id</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">_</span><span class="p">,</span> <span class="n">at</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">points_by_id</span><span class="p">[</span><span class="n">sample_id</span><span class="p">]</span>
+            <span class="k">except</span> <span class="ne">KeyError</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">KeyError</span><span class="p">(</span><span class="s2">"sample_id not found"</span><span class="p">)</span> <span class="kn">from</span><span class="w"> </span><span class="nn">exc</span>
+        <span class="k">if</span> <span class="n">at</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">at</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">start</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">cursor</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="nb">min</span><span class="p">(</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">end</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">cursor</span> <span class="o">+</span> <span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="n">advance_s</span><span class="p">))</span>
+        <span class="n">previous</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">cursor</span>
+        <span class="n">snapshot</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">snapshot</span><span class="p">(</span><span class="n">at</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">previous</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">previous</span> <span class="o">&lt;</span> <span class="n">at</span> <span class="ow">and</span> <span class="n">at</span> <span class="o">-</span> <span class="n">previous</span> <span class="o">&lt;=</span> <span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="n">advance_s</span><span class="p">):</span>
+            <span class="n">begin</span> <span class="o">=</span> <span class="n">bisect_right</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">event_times</span><span class="p">,</span> <span class="n">previous</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">begin</span> <span class="o">=</span> <span class="n">bisect_left</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">event_times</span><span class="p">,</span> <span class="n">at</span> <span class="o">-</span> <span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="n">advance_s</span><span class="p">))</span>
+        <span class="n">end</span> <span class="o">=</span> <span class="n">bisect_right</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">event_times</span><span class="p">,</span> <span class="n">at</span><span class="p">)</span>
+        <span class="n">snapshot</span><span class="o">.</span><span class="n">track_points</span> <span class="o">=</span> <span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">service</span><span class="o">.</span><span class="n">track_point</span><span class="p">(</span><span class="n">item</span><span class="p">)</span> <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">events</span><span class="p">[</span><span class="n">begin</span><span class="p">:</span><span class="n">end</span><span class="p">]]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">cursor</span> <span class="o">=</span> <span class="n">at</span>
+        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">service</span><span class="o">.</span><span class="n">publish</span><span class="p">(</span><span class="n">snapshot</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">snapshot</span></div>
+
+
+<div class="viewcode-block" id="HistoricalDataset.run">
+<a class="viewcode-back" href="../../../backend.html#backend.app.history.HistoricalDataset.run">[документация]</a>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">interval_s</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">advance_s</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">15</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">while</span> <span class="bp">self</span><span class="o">.</span><span class="n">cursor</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">cursor</span> <span class="o">&lt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">end</span><span class="p">:</span>
+                <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">step</span><span class="p">(</span><span class="n">advance_s</span><span class="o">=</span><span class="n">advance_s</span><span class="p">)</span>
+                <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="n">interval_s</span><span class="p">)</span>
+        <span class="k">except</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">CancelledError</span><span class="p">:</span>
+            <span class="k">raise</span></div>
+
+
+<div class="viewcode-block" id="HistoricalDataset.stop">
+<a class="viewcode-back" href="../../../backend.html#backend.app.history.HistoricalDataset.stop">[документация]</a>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">stop</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">task</span> <span class="ow">and</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">task</span><span class="o">.</span><span class="n">done</span><span class="p">():</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">task</span><span class="o">.</span><span class="n">cancel</span><span class="p">()</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">task</span>
+            <span class="k">except</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">CancelledError</span><span class="p">:</span>
+                <span class="k">pass</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">task</span> <span class="o">=</span> <span class="kc">None</span></div>
+
+
+<div class="viewcode-block" id="HistoricalDataset.reset">
+<a class="viewcode-back" href="../../../backend.html#backend.app.history.HistoricalDataset.reset">[документация]</a>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">reset</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">stop</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">cursor</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">service</span><span class="o">.</span><span class="n">prediction_cache</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">service</span><span class="o">.</span><span class="n">last_targets</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">service</span><span class="o">.</span><span class="n">last_predictions</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">service</span><span class="o">.</span><span class="n">alert_created</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span></div>
+</div>
+
+</pre></div>
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../../../index.html">Прогноз задержек городского транспорта</a></h1>
+
+
+
+
+
+
+
+
+<h3>Навигация</h3>
+<p class="caption" role="heading"><span class="caption-text">Разделы</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../architecture.html">Устройство системы</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../backend.html">Backend: Python-модули</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../ml_core.html">ML-ядро: Python-модули</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../api.html">Документация API</a></li>
+</ul>
+
+
+<search id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Быстрый поиск</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Искать" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 9.1.0</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
+      
+    </div>
+
+    
+
+    
+  </body>
+</html>
