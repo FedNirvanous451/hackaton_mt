@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transport AI Dispatcher</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <!-- Шрифт Roboto Mono -->
+    <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <header>
+        <div class="logo">TRANSPORT AI</div>
+        <div class="live-indicator">
+            <span class="dot"></span> LIVE <span id="clock">--:--:--</span>
+        </div>
+    </header>
+
+    <main>
+        <!-- KPI Cards -->
+        <section class="kpi-row">
+            <div class="kpi-card">
+                <div class="kpi-title">ТС Всего</div>
+                <div class="kpi-value" id="kpi-total">0</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-title">На маршруте</div>
+                <div class="kpi-value" id="kpi-online">0</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-title">Риск / Алерты</div>
+                <div class="kpi-value" id="kpi-alerts">0</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-title">Прогноз задержки</div>
+                <div class="kpi-value" id="kpi-delay">--:--</div>
+                <div class="kpi-sub">средний по активным</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-title">Телеметрия</div>
+                <div class="kpi-value" id="kpi-freshness">100%</div>
+                <div class="kpi-sub">свежая</div>
+            </div>
+        </section>
+
+        <!-- Main Grid -->
+        <section class="main-grid">
+            <!-- Map Panel -->
+            <div class="panel map-container">
+                <div class="panel-header">MAP VIEW</div>
+                <div id="map"></div>
+            </div>
+
+            <!-- Incidents Panel -->
+            <div class="panel incidents-container">
+                <div class="panel-header">INCIDENTS</div>
+                <div id="incidents-list">
+                    <div style="padding:20px; color:#8b949e; text-align:center;">Ожидание данных...</div>
+                </div>
+            </div>
+
+            <!-- Vehicles Table -->
+            <div class="panel vehicles-container">
+                <div class="panel-header">VEHICLES TABLE</div>
+                <div class="table-wrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ТС</th>
+                                <th>Маршрут</th>
+                                <th>Скорость</th>
+                                <th>Отклонение</th>
+                                <th>Прогноз</th>
+                                <th>Риск</th>
+                                <th>Статус</th>
+                            </tr>
+                        </thead>
+                        <tbody id="vehicles-table-body">
+                            <!-- Rows injected by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
