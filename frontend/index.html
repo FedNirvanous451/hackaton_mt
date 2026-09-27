@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Контроль движения</title>
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.15.0/dist/maplibre-gl.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">Контроль движения <span class="brand-divider"></span><span class="brand-subtitle">Диспетчерская панель</span></div>
+        <div class="topbar-status"><span class="connection-dot"></span> Связь с системой <strong id="mode-label">ИСТОРИЯ</strong><span id="clock">--:--:--</span></div>
+    </header>
+
+    <section class="stream-toolbar" aria-label="Управление потоком">
+        <label for="source-select">Источник данных</label>
+        <select id="source-select">
+            <option value="historical">Историческая телеметрия</option>
+            <option value="emulator">Эмулятор NDTP</option>
+        </select>
+        <select id="replay-speed" aria-label="Шаг исторического потока">
+            <option value="15">15 секунд / кадр</option>
+            <option value="60">1 минута / кадр</option>
+            <option value="300" selected>5 минут / кадр</option>
+        </select>
+        <button id="start-stream" class="button-primary">▶ Пуск</button>
+        <button id="pause-stream" disabled>Ⅱ Пауза</button>
+        <button id="reset-stream">↺ С начала</button>
+        <progress id="replay-progress" value="0" max="1"></progress>
+        <span id="stream-status" role="status">Подключение...</span>
+    </section>
+
+    <section class="stats-strip" aria-label="Сводка">
+        <div>ТС всего <strong id="kpi-total">0</strong></div>
+        <div>На линии <strong id="kpi-online">0</strong></div>
+        <div>Требуют внимания <strong id="kpi-alerts">0</strong></div>
+        <div>Средняя задержка <strong id="kpi-delay">—</strong></div>
+        <div>Актуальные данные <strong id="kpi-freshness">100%</strong></div>
+    </section>
+
+    <main class="dashboard-grid">
+        <aside class="filters-panel panel">
+            <div class="panel-title">Фильтры <button id="clear-filters" class="text-button">Сбросить</button></div>
+            <label class="filter-label" for="risk-filter">Уровень риска</label>
+            <select id="risk-filter" class="filter-select">
+                <option value="all">Все ТС</option>
+                <option value="red">Критично</option>
+                <option value="yellow">Требуют внимания</option>
+                <option value="green">В норме</option>
+                <option value="unknown">Без прогноза</option>
+            </select>
+            <div class="filter-divider"></div>
+            <label class="filter-check"><input id="show-paths" type="checkbox" checked> Показывать пути</label>
+            <label class="filter-check"><input id="show-stops" type="checkbox" checked> Показывать остановки</label>
+            <label class="filter-check"><input id="only-selected" type="checkbox"> Только выбранное ТС</label>
+            <div class="filter-divider"></div>
+            <div class="sidebar-note"><span class="note-dot"></span> Все остановки загружаются сразу из расписания.</div>
+        </aside>
+
+        <section class="map-panel panel">
+            <div class="panel-title map-title"><span>Карта движения <small id="stop-count">Остановки загружаются...</small></span><div class="map-actions"><span class="legend"><i class="legend-path"></i> путь <i class="legend-stop"></i> остановка</span><button id="show-all">Все ТС</button></div></div>
+            <div id="map"></div>
+        </section>
+
+        <aside class="incident-panel panel">
+            <div class="panel-title">Инциденты и детали <span id="incident-count" class="count-pill">0</span></div>
+            <div id="incidents-list" class="incident-content"><div class="empty-state">Ожидание данных...</div></div>
+        </aside>
+
+        <section class="vehicles-panel panel">
+            <div class="panel-title">Список транспортных средств <span id="table-count" class="count-pill">0</span></div>
+            <div class="table-wrapper"><table>
+                <thead><tr>
+                    <th>ТС</th><th>Плановая остановка</th><th>Плановое прибытие</th>
+                    <th>Прогноз прибытия</th><th>Скорость</th><th>Отклонение</th>
+                    <th>Риск</th><th>Статус</th><th>Последние данные</th>
+                </tr></thead>
+                <tbody id="vehicles-table-body"></tbody>
+            </table></div>
+        </section>
+    </main>
+
+    <script src="https://unpkg.com/maplibre-gl@5.15.0/dist/maplibre-gl.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>

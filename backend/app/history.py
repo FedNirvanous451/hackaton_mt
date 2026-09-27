@@ -3,12 +3,12 @@
 import asyncio
 import csv
 import re
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from collections import defaultdict, deque
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from .models import ScheduledArrival, Snapshot, Telemetry, VehicleRegistration
+from .models import ScheduledArrival, Snapshot, Telemetry, TrackPoint, VehicleRegistration
 from .service import DispatcherService
 from .store import LiveStore
 
@@ -62,6 +62,7 @@ class HistoricalDataset:
             self.points_by_id[row["sample_id"]] = (tr_id, at)
             self.service.forecast_points[(tr_id, at)] = (int(row["target_stop_id"]), _float(row.get("cur_dev_s")))
         self.by_vehicle: dict[int, list[Telemetry]] = defaultdict(list)
+        self.events: list[Telemetry] = []
         for row in _rows(base / "traffic.csv"):
             tr_id = int(row["tr_id"])
             unit_id = _int(row.get("unit_id"))
@@ -70,18 +71,27 @@ class HistoricalDataset:
             valid = row.get("location_valid", "").lower() in {"true", "1"}
             lon, lat = _float(row.get("lon")), _float(row.get("lat"))
             valid = valid and lon is not None and lat is not None and -180 <= lon <= 180 and -90 <= lat <= 90
-            self.by_vehicle[tr_id].append(Telemetry(tr_id=tr_id, unit_id=unit_id,
+            item = Telemetry(tr_id=tr_id, unit_id=unit_id,
                 packet_id=row.get("packet_id"), device_event_id=_int(row.get("device_event_id")),
                 event_time=_datetime(row["event_time"]), gps_time=_datetime(row.get("gps_time")),
                 received_at=_datetime(row.get("receive_time")),
                 is_hist_data=row.get("is_hist_data", "").lower() in {"true", "1"},
                 source="csv", lon=lon if valid else None, lat=lat if valid else None,
                 alt=_float(row.get("alt")), speed_kmh=_float(row.get("speed")),
-                heading_deg=_float(row.get("heading")), location_valid=valid))
+                heading_deg=_float(row.get("heading")), location_valid=valid)
+            self.by_vehicle[tr_id].append(item)
+            self.events.append(item)
+        self.events.sort(key=lambda item: item.event_time)
+        self.event_times = [item.event_time for item in self.events]
         self.times_by_vehicle = {}
+        self.valid_by_vehicle = {}
+        self.valid_times_by_vehicle = {}
         for tr_id, items in self.by_vehicle.items():
             items.sort(key=lambda item: item.event_time)
             self.times_by_vehicle[tr_id] = [item.event_time for item in items]
+            valid_items = [item for item in items if item.location_valid]
+            self.valid_by_vehicle[tr_id] = valid_items
+            self.valid_times_by_vehicle[tr_id] = [item.event_time for item in valid_items]
         all_times = [item.event_time for items in self.by_vehicle.values() for item in (items[0], items[-1]) if items]
         if not all_times:
             raise ValueError("historical traffic is empty")
@@ -98,17 +108,26 @@ class HistoricalDataset:
         return {"split": self.split, "start": self.start, "end": self.end,
                 "step_seconds": self.step_seconds,
                 "steps": int((self.end - self.start).total_seconds() // self.step_seconds) + 1,
-                "sample_count": len(self.points_by_id)}
+                "sample_count": len(self.points_by_id),
+                "packet_count": len(self.events),
+                "forecast_times": sorted({at for _, at in self.points_by_id.values()})}
 
     def status(self) -> dict:
         return {**self.timeline(), "running": self.task is not None and not self.task.done(),
-                "cursor": self.cursor}
+                "cursor": self.cursor,
+                "processed_packets": bisect_right(self.event_times, self.cursor) if self.cursor else 0}
+
+    def tracks(self, until: datetime, offset: int, limit: int) -> list[TrackPoint]:
+        """Return a page of all packets through a checkpoint, including GPS gaps."""
+        end = bisect_right(self.event_times, until)
+        return [self.service.track_point(item) for item in self.events[offset:min(end, offset + limit)]]
 
     async def snapshot(self, at: datetime) -> Snapshot:
         if at < self.start or at > self.end:
             raise ValueError("at is outside historical traffic range")
         async with self.lock:
             service = self.service
+            service.processed_packets = bisect_right(self.event_times, at)
             service.live.clear()
             service.live_last_valid.clear()
             service.live_history.clear()
@@ -116,37 +135,44 @@ class HistoricalDataset:
             for tr_id, items in self.by_vehicle.items():
                 times = self.times_by_vehicle[tr_id]
                 end = bisect_right(times, at)
-                if end == 0 or at - times[end - 1] > timedelta(seconds=90):
+                if end == 0:
                     continue
                 begin = bisect_right(times, cutoff - timedelta(microseconds=1))
-                history = items[begin:end]
-                if not history:
-                    continue
+                history = items[begin:end] or [items[end - 1]]
                 key = str(tr_id)
                 service.live[key] = history[-1]
                 service.live_history[key] = deque(history)
-                valid = next((item for item in reversed(history) if item.location_valid), None)
-                if valid:
-                    service.live_last_valid[key] = valid
+                valid_index = bisect_right(self.valid_times_by_vehicle[tr_id], at)
+                if valid_index:
+                    service.live_last_valid[key] = self.valid_by_vehicle[tr_id][valid_index - 1]
             return await service.snapshot(at=at, mode="historical", dataset_split=self.split)
 
-    async def step(self, at: datetime | None = None, sample_id: str | None = None) -> Snapshot:
+    async def step(self, at: datetime | None = None, sample_id: str | None = None,
+                   advance_s: int = 15) -> Snapshot:
         if sample_id is not None:
             try:
                 _, at = self.points_by_id[sample_id]
             except KeyError as exc:
                 raise KeyError("sample_id not found") from exc
         if at is None:
-            at = self.start if self.cursor is None else self.cursor + timedelta(seconds=self.step_seconds)
+            at = self.start if self.cursor is None else min(
+                self.end, self.cursor + timedelta(seconds=advance_s))
+        previous = self.cursor
         snapshot = await self.snapshot(at)
+        if previous is not None and previous < at and at - previous <= timedelta(seconds=advance_s):
+            begin = bisect_right(self.event_times, previous)
+        else:
+            begin = bisect_left(self.event_times, at - timedelta(seconds=advance_s))
+        end = bisect_right(self.event_times, at)
+        snapshot.track_points = [self.service.track_point(item) for item in self.events[begin:end]]
         self.cursor = at
         await self.service.publish(snapshot)
         return snapshot
 
-    async def run(self, interval_s: float) -> None:
+    async def run(self, interval_s: float, advance_s: int = 15) -> None:
         try:
-            while self.cursor is None or self.cursor + timedelta(seconds=self.step_seconds) <= self.end:
-                await self.step()
+            while self.cursor is None or self.cursor < self.end:
+                await self.step(advance_s=advance_s)
                 await asyncio.sleep(interval_s)
         except asyncio.CancelledError:
             raise
@@ -164,4 +190,6 @@ class HistoricalDataset:
         await self.stop()
         self.cursor = None
         self.service.prediction_cache.clear()
+        self.service.last_targets.clear()
+        self.service.last_predictions.clear()
         self.service.alert_created.clear()

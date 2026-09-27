@@ -125,6 +125,9 @@ def test_ml_core_http_contract_and_websocket():
                 assert ws.receive_json()["data"]["vehicles"][0]["prediction"]["source"] == "ml"
             vehicle = state["vehicles"][0]
             assert vehicle["tr_id"] == 7 and vehicle["risk"] == "red"
+            assert state["track_points"][0]["source"] == "api"
+            assert state["track_points"][0]["vehicle_id"] == "7"
+            assert any(stop["arrival_id"] == 2 for stop in state["stops"])
             assert vehicle["prediction"]["prediction_s"] == 125
             assert vehicle["prediction"]["model_version"] == "extratrees-all-42"
             assert vehicle["prediction"]["patterns"] == ["скорость заметно снизилась"]
@@ -133,6 +136,22 @@ def test_ml_core_http_contract_and_websocket():
             assert received[-1]["target_stop_lon"] == 37.7
             assert received[-1]["target_time_begin"] == (at + timedelta(minutes=12)).isoformat()
             assert "telemetry_history" not in received[-1]
+            assert {stop["arrival_id"] for stop in client.get("/api/v1/stops?mode=live").json()} == {1, 2}
+            held = client.post("/api/v1/telemetry", json={
+                "unit_id": 77, "event_time": (at + timedelta(minutes=3)).isoformat(),
+                "lon": 37.62, "lat": 55.62, "speed_kmh": 19, "location_valid": True}).json()
+            held_vehicle = next(item for item in held["vehicles"] if item["tr_id"] == 7)
+            assert held_vehicle["target_arrival"]["arrival_id"] == 2
+            assert held_vehicle["forecast_status"] == "ml"
+            assert received[-1]["last_speed_kmh"] == 19
+            assert received[-1]["forecast_time"] == (at + timedelta(minutes=3)).isoformat()
+            retained = client.post("/api/v1/telemetry", json={
+                "unit_id": 77, "event_time": (at + timedelta(minutes=13)).isoformat(),
+                "lon": 37.63, "lat": 55.63, "speed_kmh": 20, "location_valid": True}).json()
+            retained_vehicle = next(item for item in retained["vehicles"] if item["tr_id"] == 7)
+            assert retained_vehicle["forecast_status"] == "last_known"
+            assert retained_vehicle["prediction"]["predicted_arrival"] == held_vehicle["prediction"]["predicted_arrival"]
+            assert retained_vehicle["speed_kmh"] == 20
             assert client.get("/api/v1/metrics").json()["ml_success"] >= 1
             assert client.get("/health/ready").json()["scheduled_arrivals"] == 2
             assert client.get("/demo").status_code == 404
@@ -168,12 +187,28 @@ def test_baseline_and_unknown_unit_without_dataset(tmp_path: Path):
         assert risk_for_delay(120.1) == "red"
 
 
+def test_next_stop_is_shown_before_ml_window(tmp_path: Path):
+    at = _time()
+    with TestClient(create_app(ml_url="", ndtp_enabled=False, dataset_dir=tmp_path)) as client:
+        client.post("/api/v1/arrivals", json={"arrival_id": 501, "tr_id": 5,
+            "planned_at": (at + timedelta(hours=1)).isoformat(),
+            "lon": 37.7, "lat": 55.7, "address": "Дальняя остановка"})
+        state = client.post("/api/v1/telemetry", json={"tr_id": 5,
+            "event_time": at.isoformat(), "speed_kmh": 20,
+            "lon": 37.6, "lat": 55.6, "location_valid": True}).json()
+        vehicle = state["vehicles"][0]
+        assert vehicle["target_arrival"]["address"] == "Дальняя остановка"
+        assert vehicle["forecast_status"] == "outside_horizon"
+        assert vehicle["prediction"] is None
+
+
 def test_local_history_replay_uses_only_input_columns(tmp_path: Path):
     folder = tmp_path / "validate"
     folder.mkdir()
     (folder / "schedule_plan.csv").write_text(
         "tt_action_item_id,time_begin,tr_id,geom,building_address\n"
-        "10,2026-01-06 00:12:15,7,POINT (37.7 55.7),Stop\n", encoding="utf-8")
+        "10,2026-01-06 00:12:15,7,POINT (37.7 55.7),Stop\n"
+        "11,2026-01-06 04:00:00,7,POINT (37.8 55.8),Far stop\n", encoding="utf-8")
     (folder / "points.csv").write_text(
         "sample_id,tr_id,T,target_stop_id,target_time_begin,cur_dev_s\n"
         "7_15,7,2026-01-06 00:00:15,10,2026-01-06 00:12:15,75\n", encoding="utf-8")
@@ -181,16 +216,37 @@ def test_local_history_replay_uses_only_input_columns(tmp_path: Path):
         "packet_id,tr_id,unit_id,event_time,location_valid,lon,lat,speed,heading\n"
         "1,7,77,2026-01-06 00:00:00,True,37.6,55.6,0,0\n"
         "2,7,77,2026-01-06 00:00:15,True,37.6001,55.6001,0,0\n"
+        "2a,7,77,2026-01-06 00:00:17,True,37.60015,55.60015,2,0\n"
+        "2b,7,77,2026-01-06 00:00:22,False,,,2,0\n"
         "3,7,77,2026-01-06 00:00:30,True,37.6002,55.6002,5,0\n", encoding="utf-8")
     with TestClient(create_app(ml_url="", ndtp_enabled=False, dataset_dir=tmp_path)) as client:
         assert client.get("/api/v1/timeline").json()["steps"] == 3
-        with client.websocket_connect("/api/v1/ws") as ws:
+        assert client.get("/api/v1/timeline").json()["packet_count"] == 5
+        assert {stop["arrival_id"] for stop in client.get("/api/v1/stops").json()} == {10, 11}
+        with client.websocket_connect("/api/v1/ws?mode=historical") as ws:
             ws.receive_json()
             first = client.post("/api/v1/replay/step").json()
             assert first["at"] == "2026-01-06T00:00:00"
+            assert len(first["track_points"]) == 1
             assert ws.receive_json()["data"]["mode"] == "historical"
             result = client.post("/api/v1/replay/step?sample_id=7_15").json()
             assert ws.receive_json()["data"]["at"] == "2026-01-06T00:00:15"
+            final = client.post("/api/v1/replay/step").json()
+            ws.receive_json()
+            assert final["processed_packets"] == 5
+            assert [point["event_time"] for point in final["track_points"]] == [
+                "2026-01-06T00:00:17", "2026-01-06T00:00:22", "2026-01-06T00:00:30"]
+            assert final["track_points"][1]["location_valid"] is False
+        first_page = client.get("/api/v1/replay/tracks", params={
+            "until": final["at"], "offset": 0, "limit": 2}).json()
+        second_page = client.get("/api/v1/replay/tracks", params={
+            "until": final["at"], "offset": 2, "limit": 10}).json()
+        assert len(first_page) == 2 and len(second_page) == 3
+        assert second_page[1]["location_valid"] is False
+        with client.websocket_connect("/api/v1/ws?mode=live") as ws:
+            assert ws.receive_json()["data"]["mode"] == "live"
+        with client.websocket_connect("/api/v1/ws?mode=historical") as ws:
+            assert ws.receive_json()["data"]["at"] == final["at"]
         vehicle = result["vehicles"][0]
         assert result["dataset_split"] == "validate"
         assert vehicle["prediction"]["source"] == "baseline"
@@ -201,6 +257,27 @@ def test_local_history_replay_uses_only_input_columns(tmp_path: Path):
         assert client.get("/api/v1/snapshot?mode=historical&at=2026-01-06T00:00:15").status_code == 200
         assert client.post("/api/v1/replay/step?sample_id=bad").status_code == 404
         assert client.post("/api/v1/replay/reset").json()["cursor"] is None
+
+
+def test_historical_snapshot_keeps_last_telemetry_for_inactive_vehicle(tmp_path: Path):
+    folder = tmp_path / "validate"
+    folder.mkdir()
+    (folder / "schedule_plan.csv").write_text(
+        "tt_action_item_id,time_begin,tr_id,geom,building_address\n"
+        "10,2026-01-06 00:12:00,7,POINT (37.7 55.7),Stop\n", encoding="utf-8")
+    (folder / "points.csv").write_text(
+        "sample_id,tr_id,T,target_stop_id,target_time_begin,cur_dev_s\n", encoding="utf-8")
+    (folder / "traffic.csv").write_text(
+        "packet_id,tr_id,unit_id,event_time,location_valid,lon,lat,speed,heading\n"
+        "1,7,77,2026-01-06 00:00:00,True,37.6,55.6,22,0\n"
+        "2,8,88,2026-01-06 00:10:00,True,37.8,55.8,18,0\n", encoding="utf-8")
+    with TestClient(create_app(ml_url="", ndtp_enabled=False, dataset_dir=tmp_path)) as client:
+        state = client.get("/api/v1/snapshot?mode=historical&at=2026-01-06T00:09:00").json()
+        vehicle = next(item for item in state["vehicles"] if item["tr_id"] == 7)
+        assert vehicle["stale"] is True
+        assert vehicle["speed_kmh"] == 22
+        assert vehicle["lon"] == 37.6
+        assert vehicle["observed_at"] == "2026-01-06T00:00:00"
 
 
 @pytest.mark.skipif(not (Path(__file__).resolve().parents[2] / "dataset/validate/traffic.csv").exists(),

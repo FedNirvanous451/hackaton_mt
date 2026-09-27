@@ -67,6 +67,7 @@ class Vehicle(BaseModel):
     vehicle_id: str
     tr_id: int | None = None
     unit_id: int | None = None
+    source: Literal["ndtp", "api", "csv"] = "api"
     observed_at: datetime
     received_at: datetime | None = None
     location_observed_at: datetime | None = None
@@ -83,7 +84,7 @@ class Vehicle(BaseModel):
     idle_time_s: float | None = None
     prediction: Prediction | None = None
     target_arrival: ScheduledArrival | None = None
-    forecast_status: Literal["ml", "baseline", "no_target", "insufficient_data", "unknown_vehicle"] = "no_target"
+    forecast_status: Literal["ml", "baseline", "last_known", "outside_horizon", "no_target", "insufficient_data", "unknown_vehicle"] = "no_target"
     risk: Literal["green", "yellow", "red", "unknown"] = "unknown"
 
 
@@ -110,6 +111,18 @@ class Summary(BaseModel):
     alerts_red: int
 
 
+class TrackPoint(BaseModel):
+    vehicle_id: str
+    tr_id: int | None = None
+    unit_id: int | None = None
+    event_time: datetime
+    lon: float | None = None
+    lat: float | None = None
+    speed_kmh: float | None = None
+    location_valid: bool
+    source: Literal["ndtp", "api", "csv"]
+
+
 class Snapshot(BaseModel):
     at: datetime
     mode: Literal["live", "historical"] = "live"
@@ -117,6 +130,8 @@ class Snapshot(BaseModel):
     vehicles: list[Vehicle]
     alerts: list[Alert]
     stops: list[ScheduledArrival]
+    track_points: list[TrackPoint] = Field(default_factory=list)
+    processed_packets: int = 0
     summary: Summary
     ml_available: bool
 

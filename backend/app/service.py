@@ -10,7 +10,7 @@ from urllib.request import Request, urlopen
 
 from .features import build_ml_request, movement_metrics
 from .models import (Alert, MLPredictionRequest, MLPredictionResponse, Prediction,
-                     Snapshot, Summary, Telemetry, Vehicle, VehicleRegistration)
+                     ScheduledArrival, Snapshot, Summary, Telemetry, TrackPoint, Vehicle, VehicleRegistration)
 from .store import LiveStore
 
 log = logging.getLogger(__name__)
@@ -38,6 +38,8 @@ class DispatcherService:
             lambda: deque(maxlen=max(300, self.ml_history_minutes * 60)))
         self.live_last_valid: dict[str, Telemetry] = {}
         self.prediction_cache: dict[tuple[int, int], tuple[datetime, Prediction | None]] = {}
+        self.last_targets: dict[int, tuple[datetime, ScheduledArrival]] = {}
+        self.last_predictions: dict[int, Prediction] = {}
         self.alert_created: dict[str, datetime] = {}
         self.subscribers: set[asyncio.Queue] = set()
         self.last_snapshot: Snapshot | None = None
@@ -51,6 +53,14 @@ class DispatcherService:
         self.out_of_order_packets = 0
         self.websocket_dropped_snapshots = 0
         self.forecast_points: dict[tuple[int, datetime], tuple[int, float | None]] = {}
+        self.processed_packets = 0
+
+    @staticmethod
+    def track_point(item: Telemetry) -> TrackPoint:
+        return TrackPoint(vehicle_id=str(item.tr_id) if item.tr_id is not None else f"unit:{item.unit_id}",
+            tr_id=item.tr_id, unit_id=item.unit_id, event_time=item.event_time,
+            lon=item.lon, lat=item.lat, speed_kmh=item.speed_kmh,
+            location_valid=item.location_valid, source=item.source)
 
     @staticmethod
     def percentiles(values: deque[float]) -> dict[str, float | None]:
@@ -130,16 +140,45 @@ class DispatcherService:
         tr_id = telemetry.tr_id
         point = self.forecast_points.get((tr_id, at)) if tr_id is not None else None
         target = (self.store.arrivals.get(point[0]) if point else self.store.target_at(tr_id, at)) if tr_id is not None else None
+        if tr_id is not None:
+            if target is not None:
+                self.last_targets[tr_id] = (at, target)
+            else:
+                remembered = self.last_targets.get(tr_id)
+                if remembered and remembered[0] <= at <= remembered[1].planned_at:
+                    target = remembered[1]
         history = [x for x in self.live_history[key]
                    if at - timedelta(minutes=self.ml_history_minutes) <= x.event_time <= at]
-        prediction = await self._prediction(tr_id, at, target, history) if target and history else None
+        fresh_history = bool(history and at - history[-1].event_time <= timedelta(seconds=90))
+        prediction = await self._prediction(tr_id, at, target, history) if target and fresh_history else None
+        prediction_is_retained = False
+        if prediction is not None:
+            self.last_predictions[tr_id] = prediction
+        elif tr_id is not None:
+            remembered_prediction = self.last_predictions.get(tr_id)
+            if remembered_prediction and remembered_prediction.at <= at and (target is None or
+                    remembered_prediction.target_stop.arrival_id == target.arrival_id):
+                prediction = remembered_prediction
+                target = remembered_prediction.target_stop
+                prediction_is_retained = True
+        display_only_target = False
+        if target is None and tr_id is not None:
+            target = self.store.next_arrival_at(tr_id, at)
+            display_only_target = target is not None
         valid = self.live_last_valid.get(key)
         stale = at - telemetry.event_time > timedelta(seconds=90)
         location_stale = valid is None or at - valid.event_time > timedelta(seconds=90)
         segment_speed, idle_time = movement_metrics(history)
-        status = (prediction.source if prediction else "unknown_vehicle" if tr_id is None
-                  else "no_target" if target is None else "insufficient_data")
+        if prediction:
+            status = "last_known" if prediction_is_retained else prediction.source
+        elif tr_id is None:
+            status = "unknown_vehicle"
+        elif target is None:
+            status = "no_target"
+        else:
+            status = "outside_horizon" if display_only_target else "insufficient_data"
         return Vehicle(vehicle_id=key, tr_id=tr_id, unit_id=telemetry.unit_id,
+            source=telemetry.source,
             observed_at=telemetry.event_time, received_at=telemetry.received_at,
             location_observed_at=valid.event_time if valid else None,
             lon=valid.lon if valid else None, lat=valid.lat if valid else None,
@@ -158,7 +197,11 @@ class DispatcherService:
                                           for key, item in self.live.items() if item.event_time <= at))
         alerts: list[Alert] = []
         stops = {}
+        stop_start, stop_end = at - timedelta(minutes=5), at + timedelta(minutes=30)
         for vehicle in vehicles:
+            if vehicle.tr_id is not None:
+                for stop in self.store.stops_between(stop_start, stop_end, vehicle.tr_id):
+                    stops[stop.arrival_id] = stop
             prediction = vehicle.prediction
             if prediction is None:
                 continue
@@ -181,7 +224,8 @@ class DispatcherService:
         result = Snapshot(at=at, mode=mode, dataset_split=dataset_split,
                           vehicles=vehicles, alerts=alerts,
                           stops=list(stops.values()), summary=summary,
-                          ml_available=self.ml_available)
+                          ml_available=self.ml_available,
+                          processed_packets=self.processed_packets)
         self.last_snapshot = result
         return result
 
@@ -211,6 +255,7 @@ class DispatcherService:
                 self.out_of_order_packets += 1
             return self.last_snapshot or await self.snapshot(at=item.event_time)
         self.live[key] = item
+        self.processed_packets += 1
         self.live_history[key].append(item)
         cutoff = item.event_time - timedelta(minutes=self.ml_history_minutes)
         while self.live_history[key] and self.live_history[key][0].event_time < cutoff:
@@ -219,6 +264,7 @@ class DispatcherService:
             self.live_last_valid[key] = item
         at = max(x.event_time for x in self.live.values())
         snapshot = await self.snapshot(at=at)
+        snapshot.track_points = [self.track_point(item)]
         await self.publish(snapshot)
         self.ingest_latency_ms.append((time.perf_counter() - started) * 1000)
         return snapshot

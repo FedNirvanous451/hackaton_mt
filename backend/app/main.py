@@ -1,23 +1,36 @@
 """FastAPI transport backend: NDTP ingestion, ML predictions and data API."""
 
 import asyncio
+import json
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from .models import (Alert, ArrivalDeviation, ObservedArrival, Prediction,
-                     ScheduledArrival, Snapshot, Telemetry, Vehicle, VehicleRegistration)
+                     ScheduledArrival, Snapshot, Telemetry, TrackPoint, Vehicle, VehicleRegistration)
 from .ndtp import receive_ndtp
 from .history import HistoricalDataset
 from .service import DispatcherService
 from .store import LiveStore
 
 MOSCOW = timezone(timedelta(hours=3))
+EMULATOR_UNITS = (2000100, 2000500, 2000900)
+
+
+def emulator_request(method: str, payload: dict | None = None) -> dict:
+    base = os.getenv("EMULATOR_URL", "http://emulator:18080").rstrip("/")
+    data = json.dumps(payload).encode() if payload is not None else None
+    request = Request(f"{base}/api/config", data=data,
+                      headers={"Content-Type": "application/json"}, method=method)
+    with urlopen(request, timeout=5) as response:
+        return json.load(response)
 
 
 def local_time(value: datetime | None) -> datetime | None:
@@ -109,6 +122,63 @@ def create_app(ml_url: str | None = None, ndtp_enabled: bool | None = None,
                 "historical_ml_success": historical.predict_success if historical else 0,
                 "historical_ml_failures": historical.predict_failures if historical else 0}
 
+    @app.get("/api/v1/tracks", response_model=list[TrackPoint], tags=["dashboard"])
+    def tracks(source: Literal["ndtp", "api"] | None = None):
+        """Recent live packets for restoring paths after a browser reload."""
+        items = (item for group in service().live_history.values() for item in group)
+        return sorted((service().track_point(item) for item in items
+                       if source is None or item.source == source), key=lambda item: item.event_time)
+
+    @app.get("/api/v1/stops", response_model=list[ScheduledArrival], tags=["dashboard"])
+    def all_stops(mode: Literal["live", "historical"] = "historical"):
+        """Full schedule for rendering every stop before the first telemetry frame."""
+        store = history().store if mode == "historical" else service().store
+        return sorted(store.arrivals.values(), key=lambda item: (item.tr_id, item.planned_at))
+
+    @app.get("/api/v1/emulator/status", tags=["emulator"])
+    async def emulator_status():
+        try:
+            config = await asyncio.to_thread(emulator_request, "GET")
+        except (OSError, HTTPError, URLError, ValueError) as exc:
+            raise HTTPException(503, f"emulator unavailable: {exc}") from exc
+        return {"running": bool(config.get("units")), "units": config.get("units", [])}
+
+    @app.post("/api/v1/emulator/start", tags=["emulator"])
+    async def emulator_start():
+        try:
+            await asyncio.to_thread(emulator_request, "GET")
+        except (OSError, HTTPError, URLError, ValueError) as exc:
+            raise HTTPException(503, f"emulator unavailable: {exc}") from exc
+        now = datetime.now(MOSCOW).replace(tzinfo=None, microsecond=0)
+        for index, unit_id in enumerate(EMULATOR_UNITS):
+            service().register(VehicleRegistration(tr_id=unit_id, unit_id=unit_id))
+            offset = (unit_id % 1000) / 10000
+            for stop_index in range(12):
+                arrival = ScheduledArrival(arrival_id=unit_id * 100 + stop_index,
+                    tr_id=unit_id, planned_at=now + timedelta(minutes=12 + 5 * stop_index),
+                    lon=37.50 + offset + 0.005 * (stop_index + 1),
+                    lat=55.70 + offset + 0.003 * (stop_index + 1),
+                    address=f"Демонстрационная остановка {stop_index + 1}")
+                service().store.upsert_arrival(arrival)
+                service().prediction_cache.pop((unit_id, arrival.arrival_id), None)
+        config = {"targetHost": "backend", "targetPort": 9201,
+                  "units": [{"unitId": unit_id, "intervalMs": 1000,
+                             "autoGenerate": True, "cells": []} for unit_id in EMULATOR_UNITS]}
+        try:
+            await asyncio.to_thread(emulator_request, "POST", config)
+        except (OSError, HTTPError, URLError, ValueError) as exc:
+            raise HTTPException(503, f"emulator could not start: {exc}") from exc
+        return {"running": True, "unit_ids": EMULATOR_UNITS}
+
+    @app.post("/api/v1/emulator/stop", tags=["emulator"])
+    async def emulator_stop():
+        try:
+            await asyncio.to_thread(emulator_request, "POST",
+                                    {"targetHost": "backend", "targetPort": 9201, "units": []})
+        except (OSError, HTTPError, URLError, ValueError) as exc:
+            raise HTTPException(503, f"emulator could not stop: {exc}") from exc
+        return {"running": False}
+
     @app.post("/api/v1/registrations", response_model=VehicleRegistration, tags=["setup"])
     def register(item: VehicleRegistration):
         """Map an NDTP unit_id to the transport ID used in the schedule."""
@@ -189,20 +259,28 @@ def create_app(ml_url: str | None = None, ndtp_enabled: bool | None = None,
     def replay_status():
         return history().status()
 
+    @app.get("/api/v1/replay/tracks", response_model=list[TrackPoint], tags=["replay"])
+    def replay_tracks(until: datetime, offset: int = Query(0, ge=0),
+                      limit: int = Query(5000, ge=1, le=10000)):
+        """Page through every historical packet to restore map paths after reconnect."""
+        return history().tracks(local_time(until), offset, limit)
+
     @app.post("/api/v1/replay/step", response_model=Snapshot, tags=["replay"])
-    async def replay_step(sample_id: str | None = None, at: datetime | None = None):
+    async def replay_step(sample_id: str | None = None, at: datetime | None = None,
+                          advance_s: int = Query(15, ge=15, le=300)):
         try:
-            return await history().step(local_time(at), sample_id)
+            return await history().step(local_time(at), sample_id, advance_s)
         except KeyError as exc:
             raise HTTPException(404, str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
 
     @app.post("/api/v1/replay/start", tags=["replay"])
-    async def replay_start(interval_s: float = Query(1.0, ge=0.05, le=60)):
+    async def replay_start(interval_s: float = Query(1.0, ge=0.05, le=60),
+                           advance_s: int = Query(15, ge=15, le=300)):
         source = history()
         if source.task is None or source.task.done():
-            source.task = asyncio.create_task(source.run(interval_s))
+            source.task = asyncio.create_task(source.run(interval_s, advance_s))
         return source.status()
 
     @app.post("/api/v1/replay/stop", tags=["replay"])
@@ -232,14 +310,19 @@ def create_app(ml_url: str | None = None, ndtp_enabled: bool | None = None,
     @app.websocket("/api/v1/ws")
     async def websocket(ws: WebSocket):
         await ws.accept()
-        queue: asyncio.Queue = asyncio.Queue(maxsize=1)
-        service().subscribers.add(queue)
-        if app.state.history:
-            app.state.history.service.subscribers.add(queue)
+        queue: asyncio.Queue = asyncio.Queue(maxsize=1024)
+        historical = app.state.history
+        mode = ws.query_params.get("mode", "live")
+        if mode == "historical" and historical:
+            historical.service.subscribers.add(queue)
+        else:
+            service().subscribers.add(queue)
         try:
-            historical = app.state.history
-            initial = (historical.service.last_snapshot if historical and historical.cursor is not None
-                       else None) or service().last_snapshot or await service().snapshot()
+            if mode == "historical" and historical:
+                initial = historical.service.last_snapshot or await historical.snapshot(
+                    historical.cursor or historical.start)
+            else:
+                initial = service().last_snapshot or await service().snapshot()
             await ws.send_json({"type": "snapshot", "data": initial.model_dump(mode="json")})
             while True:
                 next_message = asyncio.create_task(queue.get())

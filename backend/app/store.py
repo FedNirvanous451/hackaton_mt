@@ -1,6 +1,6 @@
 """Live vehicle identity, schedule and observed-arrival state."""
 
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from datetime import datetime, timedelta
 
@@ -46,6 +46,12 @@ class LiveStore:
         if index < len(group) and group[index].planned_at <= at + timedelta(minutes=15):
             return group[index]
         return None
+
+    def next_arrival_at(self, tr_id: int, at: datetime) -> ScheduledArrival | None:
+        """Next scheduled stop for display while the ML forecast window is still ahead."""
+        group = self.by_vehicle.get(tr_id, [])
+        index = bisect_left([item.planned_at for item in group], at)
+        return group[index] if index < len(group) else None
 
     def stops_between(self, start: datetime, end: datetime,
                       tr_id: int | None = None) -> list[ScheduledArrival]:

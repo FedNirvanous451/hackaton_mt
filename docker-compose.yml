@@ -1,0 +1,65 @@
+services:
+  ml:
+    build:
+      context: ./ml_core
+      dockerfile: Dockerfile
+    ports:
+      - "8081:8000"
+    environment:
+      MODEL_PATH: /app/models/extratrees_all_42.joblib
+      MODEL_VERSION: extratrees-all-42
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json, urllib.request; assert json.load(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2))['model_loaded']"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
+      - "9201:9201"
+    environment:
+      ML_SERVICE_URL: http://ml:8000
+      ML_HISTORY_MINUTES: 15
+      DATASET_DIR: /srv/dataset
+      DATASET_SPLIT: validate
+      NDTP_ENABLED: 1
+      EMULATOR_URL: http://emulator:18080
+    volumes:
+      - ./dataset:/srv/dataset:ro
+    depends_on:
+      ml:
+        condition: service_healthy
+    # ИСПРАВЛЕНИЕ: используем python вместо curl для проверки здоровья
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live')"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  emulator:
+    image: ndtp-telemetry-emulator:1.0
+    ports:
+      - "18080:18080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
